@@ -4,6 +4,7 @@ import numpy as np
 import time
 
 import torch
+import trimesh
 
 
 parser = argparse.ArgumentParser()
@@ -493,6 +494,7 @@ elif is_testing:
 elif quick_testing:
     import cutils
 
+    start_time = time.time()
 
     #load weights
     print('loading net...')
@@ -564,8 +566,16 @@ elif quick_testing:
 
 
     elif FLAGS.input_type == "pointcloud":
+
         #Create test dataset
-        dataset_test = datasetpc.single_shape_pointcloud(FLAGS.test_input, FLAGS.point_num, FLAGS.grid_size, KNN_num, pooling_radius, normalize=False)
+        LOD_input = trimesh.load(FLAGS.test_input)
+        LOD_input = LOD_input.vertices.astype(np.float32)
+        LOD_input_min = np.min(LOD_input,0)
+        LOD_input_max = np.max(LOD_input,0)
+        LOD_input_mean = (LOD_input_min+LOD_input_max)/2
+        LOD_input_scale = np.sum((LOD_input_max-LOD_input_min)**2)**0.5
+
+        dataset_test = datasetpc.single_shape_pointcloud(FLAGS.test_input, FLAGS.point_num, FLAGS.grid_size, KNN_num, pooling_radius, normalize=True)
         dataloader_test = torch.utils.data.DataLoader(dataset_test, batch_size=1, shuffle=False, num_workers=1)  #batch_size must be 1
 
         for i, data in enumerate(dataloader_test, 0):
@@ -600,6 +610,8 @@ elif quick_testing:
 
                 pred_output_bool_numpy = pred_output_bool_grid.detach().cpu().numpy()
                 pred_output_float_numpy = pred_output_float_grid.detach().cpu().numpy()
+
+                # pred_output_float_numpy = pred_output_float_numpy * LOD_input_scale + np.reshape(LOD_input_mean, [1,3])
 
 
     elif FLAGS.input_type == "noisypc":
@@ -661,4 +673,13 @@ elif quick_testing:
     else:
         #vertices, triangles = utils.dual_contouring_ndc_test(pred_output_bool_numpy, pred_output_float_numpy)
         vertices, triangles = cutils.dual_contouring_ndc(np.ascontiguousarray(pred_output_bool_numpy, np.int32), np.ascontiguousarray(pred_output_float_numpy, np.float32))
+    
+    end_time = time.time()
+
+    with open(FLAGS.sample_dir+"/quicktest_"+FLAGS.method+"_"+FLAGS.input_type+".txt", "w") as f:
+        f.write("time: "+str(end_time-start_time))
+
+    vertices = vertices / FLAGS.grid_size - 0.5
+    vertices = vertices * LOD_input_scale + np.reshape(LOD_input_mean, [1,3])
+    
     utils.write_obj_triangle(FLAGS.sample_dir+"/quicktest_"+FLAGS.method+"_"+FLAGS.input_type+".obj", vertices, triangles)
